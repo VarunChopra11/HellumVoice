@@ -118,7 +118,7 @@ class CommandThread(threading.Thread):
             
             # Wait for recognition to complete or timeout after 5 seconds of silence
             start_time = time.time()
-            silent_time = 0
+            # silent_time = 0
             
             while not done and not self.stopped():
                 time.sleep(0.1)
