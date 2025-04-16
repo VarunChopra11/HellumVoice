@@ -1,0 +1,13 @@
+# Wake word detection
+pvporcupine
+pvrecorder
+
+# Azure services
+azure-cognitiveservices-speech
+openai
+
+# Environment variables
+python-dotenv
+
+# Audio processing
+pyaudio
