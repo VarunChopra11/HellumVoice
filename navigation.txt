@@ -1,0 +1,442 @@
+USER - 
+
+Explain the functionalities and its implementation of this code file in detail but to the point.
+Then guide how to setup this in raspberry pi 3b+ and arduino uno for navigating the robot using l293d motor driver for motor control and neo m8n gps module for extracting gps values .
+
+3.7 SONNET THINKING :- 
+
+Navigation System for Autonomous Campus Tour Robot
+This file (navigation.py) implements a comprehensive autonomous robot navigation system designed for a campus tour guide robot. Here's a breakdown of its functionality:
+
+Core Components
+RobotState Class
+
+Stores real-time data about the robot's position, heading, obstacles, and navigation progress
+Uses GPS coordinates and tracks distances to waypoints
+GPSModule Class
+
+Handles communication with GPS hardware via serial connection
+Averages readings to improve accuracy
+Calculates heading based on position changes
+SensorModule Class
+
+Communicates with Arduino to read sensor data (ultrasonic, magnetometer)
+Detects obstacles and provides heading information
+MotionController Class
+
+Sends movement commands to Arduino
+Controls motors for forward/backward movement and turning
+NavigationSystem Class
+
+Core navigation logic integrating GPS, sensors, and motion control
+Uses Google Maps API for route planning and waypoint generation
+Implements obstacle avoidance and path following algorithms
+CampusTourRobot Class
+
+High-level interface for the robot's tour guide functionality
+Manages landmarks, creates tour routes, and provides announcements
+Key Features
+Waypoint Navigation: Guides robot through a series of GPS coordinates
+Obstacle Detection & Avoidance: Uses ultrasonic sensors to avoid collisions
+Route Planning: Gets walking paths from Google Maps API
+Campus Tours: Stores landmark information and creates multi-stop tours
+Path Optimization: Reduces waypoint redundancy while preserving path accuracy
+Setup Guide for Raspberry Pi 3B+ and Arduino Uno
+Hardware Requirements
+Raspberry Pi 3B+
+Arduino Uno
+L293D motor driver
+NEO-M8N GPS module
+Ultrasonic sensors (3x)
+Magnetometer (HMC5883L)
+DC motors (2x)
+Power supplies
+Step 1: Physical Connections
+Arduino Connections:
+
+Connect L293D motor driver:
+Enable pins to Arduino PWM pins (3, 6)
+Control pins to digital pins (4, 5, 7, 8)
+Connect ultrasonic sensors:
+Front: Trig to pin 9, Echo to pin 10
+Left: Trig to pin 11, Echo to pin 12
+Right: Trig to pin 13, Echo to pin A0
+Connect HMC5883L magnetometer:
+SDA to Arduino SDA
+SCL to Arduino SCL
+VCC to 3.3V
+GND to ground
+GPS Connection to Raspberry Pi:
+
+Connect NEO-M8N GPS module:
+VCC to 3.3V
+GND to ground
+TX to RX (GPIO 15)
+RX to TX (GPIO 14)
+Connect Arduino to Raspberry Pi via USB
+
+Step 2: Software Setup on Raspberry Pi
+Install dependencies:
+
+"""
+sudo apt update
+sudo apt install python3-pip python3-serial
+pip3 install -r requirements.txt
+"""
+
+Configure serial port for GPS:
+"""
+# Disable console on serial port
+sudo raspi-config
+# Select "Interface Options" > "Serial" > Disable login shell > Enable serial port
+"""
+
+Configure Google Maps API:
+"""
+export GOOGLE_MAPS_API_KEY="your_api_key_here"
+"""
+
+Step 3: Upload Arduino Code
+Install required Arduino libraries:
+
+ArduinoJson
+NewPing
+Adafruit_Sensor
+Adafruit_HMC5883_U
+Extract the Arduino code from ARDUINO_CODE variable in navigation.py
+
+Upload to Arduino Uno using Arduino IDE
+
+Step 4: Modify Configuration
+Update the load_config method in NavigationSystem class:
+"""
+self.config = {
+    "gps_port": "/dev/ttyS0",  # For GPIO serial pins
+    # or "/dev/ttyACM0" for USB GPS
+    "arduino_port": "/dev/ttyACM0",
+    # Other settings remain unchanged
+}
+"""
+
+Adjust GPS_AVERAGING_SAMPLES and other constants based on your hardware performance
+
+Step 5: Run the Navigation System:
+"""
+python3 navigation.py
+"""
+
+
+Troubleshooting Tips
+GPS Connection Issues: Check if the NEO-M8N is receiving power and has clear sky view. Use gpsd tools to debug.
+
+Motor Control Problems: Verify L293D wiring and ensure adequate power supply for motors.
+
+Arduino Communication: Check if the correct port is specified and permissions are set.
+
+Sensor Readings: Test each sensor individually to confirm they're working correctly.
+
+The system is designed to be modular, so you can test each component separately before integrating them together.
+
+
+
+
+
+
+
+
+
+
+
+
+                                                            ARDUINO CODE
+
+
+
+
+
+# Arduino code that should be loaded onto the Arduino for sensor handling and motor control
+ARDUINO_CODE = """
+// Campus Tour Robot - Arduino Controller
+// Controls motors and reads sensors
+
+#include <ArduinoJson.h>  // Make sure to install this library
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_HMC5883_U.h>  // For magnetometer
+#include <NewPing.h>  // For ultrasonic sensors
+
+// Pin definitions
+// Motor control pins
+#define LEFT_MOTOR_EN 3
+#define LEFT_MOTOR_1 4
+#define LEFT_MOTOR_2 5
+#define RIGHT_MOTOR_EN 6
+#define RIGHT_MOTOR_1 7
+#define RIGHT_MOTOR_2 8
+
+// Ultrasonic sensor pins
+#define TRIG_PIN_FRONT 9
+#define ECHO_PIN_FRONT 10
+#define TRIG_PIN_LEFT 11
+#define ECHO_PIN_LEFT 12
+#define TRIG_PIN_RIGHT 13
+#define ECHO_PIN_RIGHT A0
+
+// Constants
+#define MAX_DISTANCE 300     // Maximum distance for ultrasonic sensors (cm)
+#define JSON_BUFFER_SIZE 512 // Size of JSON buffer
+
+// Initialize sensors
+NewPing sonarFront(TRIG_PIN_FRONT, ECHO_PIN_FRONT, MAX_DISTANCE);
+NewPing sonarLeft(TRIG_PIN_LEFT, ECHO_PIN_LEFT, MAX_DISTANCE);
+NewPing sonarRight(TRIG_PIN_RIGHT, ECHO_PIN_RIGHT, MAX_DISTANCE);
+Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
+
+// Global variables
+float heading = 0.0;
+bool magnetometerAvailable = false;
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(115200);
+  
+  // Initialize motor control pins
+  pinMode(LEFT_MOTOR_EN, OUTPUT);
+  pinMode(LEFT_MOTOR_1, OUTPUT);
+  pinMode(LEFT_MOTOR_2, OUTPUT);
+  pinMode(RIGHT_MOTOR_EN, OUTPUT);
+  pinMode(RIGHT_MOTOR_1, OUTPUT);
+  pinMode(RIGHT_MOTOR_2, OUTPUT);
+  
+  // Stop motors initially
+  stopMotors();
+  
+  // Initialize I2C and magnetometer
+  Wire.begin();
+  if (mag.begin()) {
+    magnetometerAvailable = true;
+    Serial.println("Magnetometer initialized");
+  } else {
+    Serial.println("Magnetometer not found");
+  }
+  
+  Serial.println("Robot controller initialized");
+}
+
+void loop() {
+  // Check for commands from Raspberry Pi
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\\n');
+    processCommand(command);
+  }
+  
+  // Update magnetometer reading
+  if (magnetometerAvailable) {
+    updateHeading();
+  }
+  
+  // Small delay to prevent CPU hogging
+  delay(10);
+}
+
+void processCommand(String command) {
+  // Parse the command
+  char cmd = command.charAt(0);
+  int value = 0;
+  
+  // Check if there's a value part (format: "X:value")
+  if (command.indexOf(':') > 0) {
+    value = command.substring(command.indexOf(':') + 1).toInt();
+  }
+  
+  // Execute the command
+  switch (cmd) {
+    case 'F': // Forward
+      moveForward(value > 0 ? value : 255);
+      Serial.println("OK:Forward");
+      break;
+      
+    case 'B': // Backward
+      moveBackward(value > 0 ? value : 255);
+      Serial.println("OK:Backward");
+      break;
+      
+    case 'L': // Left turn
+      turnLeft(value);
+      Serial.println("OK:Left");
+      break;
+      
+    case 'R': // Right turn
+      turnRight(value);
+      Serial.println("OK:Right");
+      break;
+      
+    case 'S': // Stop
+      stopMotors();
+      Serial.println("OK:Stop");
+      break;
+      
+    case 'D': // Debug info
+      sendDebugInfo();
+      break;
+      
+    default: // Sensor readings
+      sendSensorData();
+      break;
+  }
+}
+
+void sendSensorData() {
+  // Create JSON document
+  StaticJsonDocument<JSON_BUFFER_SIZE> doc;
+  
+  // Add ultrasonic sensor readings
+  JsonObject ultrasonic = doc.createNestedObject("ultrasonic");
+  ultrasonic["front"] = sonarFront.ping_cm();
+  ultrasonic["left"] = sonarLeft.ping_cm();
+  ultrasonic["right"] = sonarRight.ping_cm();
+  
+  // Add magnetometer reading if available
+  if (magnetometerAvailable) {
+    doc["magnetometer"] = heading;
+  }
+  
+  // Serialize JSON to serial
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void sendDebugInfo() {
+  // Create JSON document for debug info
+  StaticJsonDocument<JSON_BUFFER_SIZE> doc;
+  
+  // Add sensor readings
+  JsonObject sensors = doc.createNestedObject("sensors");
+  sensors["front"] = sonarFront.ping_cm();
+  sensors["left"] = sonarLeft.ping_cm();
+  sensors["right"] = sonarRight.ping_cm();
+  
+  // Add magnetometer reading if available
+  if (magnetometerAvailable) {
+    sensors["heading"] = heading;
+  }
+  
+  // Add system info
+  JsonObject system = doc.createNestedObject("system");
+  system["uptime"] = millis() / 1000;
+  system["free_memory"] = freeMemory();
+  
+  // Serialize JSON to serial
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void updateHeading() {
+  // Read magnetometer data
+  sensors_event_t event;
+  mag.getEvent(&event);
+  
+  // Calculate heading in degrees (0-359.99)
+  float headingRad = atan2(event.magnetic.y, event.magnetic.x);
+  
+  // Correct for declination (adjust for your location)
+  // Find declination here: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+  float declinationAngle = 0.0873; // Example: ~5 degrees east (in radians)
+  headingRad += declinationAngle;
+  
+  // Normalize to 0-2π
+  if (headingRad < 0) {
+    headingRad += 2 * PI;
+  } else if (headingRad > 2 * PI) {
+    headingRad -= 2 * PI;
+  }
+  
+  // Convert to degrees
+  heading = headingRad * 180 / PI;
+}
+
+void moveForward(int speed) {
+  // Left motor forward
+  digitalWrite(LEFT_MOTOR_1, HIGH);
+  digitalWrite(LEFT_MOTOR_2, LOW);
+  analogWrite(LEFT_MOTOR_EN, speed);
+  
+  // Right motor forward
+  digitalWrite(RIGHT_MOTOR_1, HIGH);
+  digitalWrite(RIGHT_MOTOR_2, LOW);
+  analogWrite(RIGHT_MOTOR_EN, speed);
+}
+
+void moveBackward(int speed) {
+  // Left motor backward
+  digitalWrite(LEFT_MOTOR_1, LOW);
+  digitalWrite(LEFT_MOTOR_2, HIGH);
+  analogWrite(LEFT_MOTOR_EN, speed);
+  
+  // Right motor backward
+  digitalWrite(RIGHT_MOTOR_1, LOW);
+  digitalWrite(RIGHT_MOTOR_2, HIGH);
+  analogWrite(RIGHT_MOTOR_EN, speed);
+}
+
+void turnLeft(int radius) {
+  if (radius == 0) {
+    // Spin in place
+    digitalWrite(LEFT_MOTOR_1, LOW);
+    digitalWrite(LEFT_MOTOR_2, HIGH);
+    analogWrite(LEFT_MOTOR_EN, 200);
+    
+    digitalWrite(RIGHT_MOTOR_1, HIGH);
+    digitalWrite(RIGHT_MOTOR_2, LOW);
+    analogWrite(RIGHT_MOTOR_EN, 200);
+  } else {
+    // Turn with radius
+    digitalWrite(LEFT_MOTOR_1, HIGH);
+    digitalWrite(LEFT_MOTOR_2, LOW);
+    analogWrite(LEFT_MOTOR_EN, 100);  // Slower
+    
+    digitalWrite(RIGHT_MOTOR_1, HIGH);
+    digitalWrite(RIGHT_MOTOR_2, LOW);
+    analogWrite(RIGHT_MOTOR_EN, 200);  // Faster
+  }
+}
+
+void turnRight(int radius) {
+  if (radius == 0) {
+    // Spin in place
+    digitalWrite(LEFT_MOTOR_1, HIGH);
+    digitalWrite(LEFT_MOTOR_2, LOW);
+    analogWrite(LEFT_MOTOR_EN, 200);
+    
+    digitalWrite(RIGHT_MOTOR_1, LOW);
+    digitalWrite(RIGHT_MOTOR_2, HIGH);
+    analogWrite(RIGHT_MOTOR_EN, 200);
+  } else {
+    // Turn with radius
+    digitalWrite(LEFT_MOTOR_1, HIGH);
+    digitalWrite(LEFT_MOTOR_2, LOW);
+    analogWrite(LEFT_MOTOR_EN, 200);  // Faster
+    
+    digitalWrite(RIGHT_MOTOR_1, HIGH);
+    digitalWrite(RIGHT_MOTOR_2, LOW);
+    analogWrite(RIGHT_MOTOR_EN, 100);  // Slower
+  }
+}
+
+void stopMotors() {
+  // Stop both motors
+  digitalWrite(LEFT_MOTOR_1, LOW);
+  digitalWrite(LEFT_MOTOR_2, LOW);
+  analogWrite(LEFT_MOTOR_EN, 0);
+  
+  digitalWrite(RIGHT_MOTOR_1, LOW);
+  digitalWrite(RIGHT_MOTOR_2, LOW);
+  analogWrite(RIGHT_MOTOR_EN, 0);
+}
+
+// Function to estimate free memory
+int freeMemory() {
+  char top;
+  return &top - reinterpret_cast<char*>(malloc(4));
+}
+"""

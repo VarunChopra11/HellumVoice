@@ -11,3 +11,7 @@ python-dotenv
 
 # Audio processing
 pyaudio
+
+requests
+polyline
+pyserial
