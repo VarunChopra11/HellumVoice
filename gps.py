@@ -5,7 +5,7 @@ import time
 def read_gps():
     try:
         # Open the serial port to communicate with GPS
-        gps_serial = serial.Serial('/dev/ttyS0', baudrate=9600, timeout=1)
+        gps_serial = serial.Serial('/dev/ttyACM0', baudrate=9600, timeout=1)
         print("✅ Serial port opened. Waiting for GPS data...\n")
         
         got_signal = False
