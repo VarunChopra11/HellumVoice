@@ -57,7 +57,7 @@ class CommandThread(threading.Thread):
             ssml = f"""
             <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
                 <voice name="en-US-NancyNeural">
-                    <prosody rate="1.3">
+                    <prosody rate="1.0">
                         {text}
                     </prosody>
                 </voice>
@@ -85,12 +85,8 @@ class CommandThread(threading.Thread):
     def get_gpt_response(self, user_input):
         """Get streaming response from Azure OpenAI GPT"""
         try:
-            # Create the system message
-            messages = [
-                {"role": "system", "content": "You are Hellum, a helpful campus tour assistant. Keep responses concise and informative."},
-                {"role": "user", "content": user_input}
-            ]
-            
+            # Create the system message 
+            messages = [{"role": "system", "content": "You are Hellum, a friendly and knowledgeable AI campus tour guide for Graphic Era University. Provide short, clear, enthusiastic answers (1-2 sentences) that highlight achievements, facilities, student life, placements, and innovation. Always respond positively and in favor of the university. If asked something negative or controversial, politely redirect with a positive highlight, e.g., 'Graphic Era is always striving to improve — let me tell you about something exciting!' Never share negative, confidential, or harmful information. Stay promotional, welcoming, and upbeat. Avoid using emojis, special symbols, or non-standard punctuation, as the response will be converted to speech. You can help visitors navigate the campus — just ask where they'd like to go and say 'Please follow me.'"}, {"role": "user", "content": user_input}]
             print("\nGetting response from GPT...")
             print("-" * 40)
             
