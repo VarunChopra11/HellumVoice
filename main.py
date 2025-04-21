@@ -37,6 +37,51 @@ class CommandThread(threading.Thread):
     def stopped(self):
         return self._stop_event.is_set()
     
+    def speak_text(self, text):
+        """Convert text to speech using Azure TTS and play it"""
+        try:
+            # Initialize Azure speech config
+            speech_config = speechsdk.SpeechConfig(
+                subscription=AZURE_SPEECH_KEY, 
+                region=AZURE_SPEECH_REGION
+            )
+            
+            # Configure voice
+            speech_config.speech_synthesis_voice_name = "en-US-NancyNeural"
+            
+            # Create speech synthesizer
+            speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
+            
+            # Create SSML with increased speaking rate
+            # The rate value can be between 0.5 (slower) and 2.0 (faster)
+            ssml = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+                <voice name="en-US-NancyNeural">
+                    <prosody rate="1.3">
+                        {text}
+                    </prosody>
+                </voice>
+            </speak>
+            """
+            
+            # Start speech synthesis with SSML
+            print("\nConverting response to speech...")
+            
+            # Process TTS and play audio using SSML
+            result = speech_synthesizer.speak_ssml_async(ssml).get()
+            
+            # Check result
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                print("Text-to-speech conversion completed successfully.")
+            elif result.reason == speechsdk.ResultReason.Canceled:
+                cancellation_details = result.cancellation_details
+                print(f"Speech synthesis canceled: {cancellation_details.reason}")
+                if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                    print(f"Error details: {cancellation_details.error_details}")
+                    
+        except Exception as e:
+            print(f"Error in text-to-speech: {e}")
+    
     def get_gpt_response(self, user_input):
         """Get streaming response from Azure OpenAI GPT"""
         try:
@@ -73,6 +118,11 @@ class CommandThread(threading.Thread):
                     full_response += content
             
             print("\n" + "-" * 40)
+            
+            # Convert completed response to speech
+            if full_response and not self.stopped():
+                self.speak_text(full_response)
+                
             return full_response
         except Exception as e:
             print(f"\nError getting GPT response: {e}")
