@@ -268,7 +268,7 @@ def main():
         # Initialize Porcupine for wake word detection
         porcupine = pvporcupine.create(
             access_key=PV_ACCESS_KEY,
-            keyword_paths=["hellum_win.ppn"],
+            keyword_paths=["hellum_pi.ppn"],
             sensitivities=[0.7]
         )
         
