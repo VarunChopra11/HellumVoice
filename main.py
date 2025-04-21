@@ -1,11 +1,15 @@
 import os
 import threading
 import time
+import wave
+import requests
+import pyaudio
+import io
 from pvrecorder import PvRecorder
 import pvporcupine
-import azure.cognitiveservices.speech as speechsdk
 from openai import AzureOpenAI
 from dotenv import load_dotenv
+import uuid
 
 load_dotenv()
 
@@ -38,22 +42,9 @@ class CommandThread(threading.Thread):
         return self._stop_event.is_set()
     
     def speak_text(self, text):
-        """Convert text to speech using Azure TTS and play it"""
+        """Convert text to speech using Azure TTS REST API and play it"""
         try:
-            # Initialize Azure speech config
-            speech_config = speechsdk.SpeechConfig(
-                subscription=AZURE_SPEECH_KEY, 
-                region=AZURE_SPEECH_REGION
-            )
-            
-            # Configure voice
-            speech_config.speech_synthesis_voice_name = "en-US-NancyNeural"
-            
-            # Create speech synthesizer
-            speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
-            
-            # Create SSML with increased speaking rate
-            # The rate value can be between 0.5 (slower) and 2.0 (faster)
+            # Prepare SSML content
             ssml = f"""
             <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
                 <voice name="en-US-NancyNeural">
@@ -64,21 +55,59 @@ class CommandThread(threading.Thread):
             </speak>
             """
             
-            # Start speech synthesis with SSML
+            # Azure Speech Service TTS endpoint
+            tts_url = f"https://{AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
+            
+            # Set headers
+            headers = {
+                "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
+                "Content-Type": "application/ssml+xml",
+                "X-Microsoft-OutputFormat": "riff-24khz-16bit-mono-pcm",
+                "User-Agent": "RaspberryPiClient"
+            }
+            
             print("\nConverting response to speech...")
             
-            # Process TTS and play audio using SSML
-            result = speech_synthesizer.speak_ssml_async(ssml).get()
+            # Make POST request to Azure TTS API
+            response = requests.post(tts_url, headers=headers, data=ssml.encode('utf-8'))
             
-            # Check result
-            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            if response.status_code == 200:
                 print("Text-to-speech conversion completed successfully.")
-            elif result.reason == speechsdk.ResultReason.Canceled:
-                cancellation_details = result.cancellation_details
-                print(f"Speech synthesis canceled: {cancellation_details.reason}")
-                if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    print(f"Error details: {cancellation_details.error_details}")
+                
+                # Play the audio using PyAudio
+                p = pyaudio.PyAudio()
+                
+                # Convert the response content to audio stream
+                audio_data = io.BytesIO(response.content)
+                
+                # Open a wave file for reading
+                with wave.open(audio_data, 'rb') as wf:
+                    # Open a stream
+                    stream = p.open(
+                        format=p.get_format_from_width(wf.getsampwidth()),
+                        channels=wf.getnchannels(),
+                        rate=wf.getframerate(),
+                        output=True
+                    )
                     
+                    # Read data in chunks
+                    chunk_size = 1024
+                    data = wf.readframes(chunk_size)
+                    
+                    # Play the audio
+                    while data and not self._stop_event.is_set():
+                        stream.write(data)
+                        data = wf.readframes(chunk_size)
+                    
+                    # Clean up
+                    stream.stop_stream()
+                    stream.close()
+                
+                p.terminate()
+            else:
+                print(f"Error in text-to-speech: {response.status_code}")
+                print(f"Response: {response.text}")
+                
         except Exception as e:
             print(f"Error in text-to-speech: {e}")
     
@@ -123,67 +152,116 @@ class CommandThread(threading.Thread):
         except Exception as e:
             print(f"\nError getting GPT response: {e}")
             return "Sorry, I encountered an error processing your request."
-        
-    def run(self):
-        print("Listening for command...")
+    
+    def recognize_speech(self):
+        """Recognize speech using Azure Speech-to-Text REST API"""
         try:
-            # Initialize speech recognition
-            speech_config = speechsdk.SpeechConfig(
-                subscription=AZURE_SPEECH_KEY, 
-                region=AZURE_SPEECH_REGION
-            )
-            speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config)
+            # Set up PyAudio for recording
+            p = pyaudio.PyAudio()
             
-            # Set up the event handlers for real-time transcription
-            recognized_text = None
-            done = False
+            # Audio parameters
+            format = pyaudio.paInt16
+            channels = 1
+            rate = 16000
+            chunk = 1024
+            record_seconds = 5  # Initial recording time, will extend if voice is detected
             
-            def stop_cb(evt):
-                nonlocal done
-                done = True
-                
-            def recognized_cb(evt):
-                # This callback is called for final recognition results
-                nonlocal recognized_text
-                recognized_text = evt.result.text
-                print(f"\nCommand detected: {recognized_text}")
-                
-            def recognizing_cb(evt):
-                # This callback is called for interim results during recognition
-                if not self.stopped():
-                    print(f"Recognizing: {evt.result.text}", end="\r")
+            print("\nListening for command...")
             
-            # Connect the event handlers
-            speech_recognizer.recognized.connect(recognized_cb)
-            speech_recognizer.recognizing.connect(recognizing_cb)
-            speech_recognizer.session_stopped.connect(stop_cb)
-            speech_recognizer.canceled.connect(stop_cb)
+            # Start recording
+            stream = p.open(format=format, channels=channels,
+                            rate=rate, input=True,
+                            frames_per_buffer=chunk)
             
-            # Start continuous recognition
-            speech_recognizer.start_continuous_recognition()
+            frames = []
+            silence_threshold = 700  # Adjust based on your microphone sensitivity
+            silence_counter = 0
+            max_silence = 10  # About 1.5 seconds of silence to end recording
             
-            # Wait for recognition to complete or timeout after 5 seconds of silence
             start_time = time.time()
-            # silent_time = 0
+            max_record_time = 10  # Maximum recording time in seconds
             
-            while not done and not self.stopped():
-                time.sleep(0.1)
-                if recognized_text:
-                    break
+            # Record until silence is detected or max time is reached
+            while not self.stopped() and (time.time() - start_time) < max_record_time:
+                data = stream.read(chunk, exception_on_overflow=False)
+                frames.append(data)
                 
-                if time.time() - start_time > 10:  # Total timeout
-                    print("\nCommand recognition timed out.")
-                    break
+                # Check for silence
+                audio_data = b''.join(frames[-3:])  # Check last few chunks
+                amplitude = max(abs(int.from_bytes(audio_data[i:i+2], byteorder='little', signed=True))
+                                for i in range(0, len(audio_data), 2))
+                
+                if amplitude < silence_threshold:
+                    silence_counter += 1
+                    if silence_counter >= max_silence:
+                        break
+                else:
+                    silence_counter = 0
             
-            # Stop recognition
-            speech_recognizer.stop_continuous_recognition()
+            # Stop recording
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
             
-            # Process the recognized text with GPT if available
-            if recognized_text and not self.stopped():
-                self.get_gpt_response(recognized_text)
+            if len(frames) == 0:
+                print("No audio recorded")
+                return None
+            
+            # Save the recorded audio to WAV file temporarily
+            temp_filename = f"temp_audio_{uuid.uuid4()}.wav"
+            wf = wave.open(temp_filename, 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(p.get_sample_size(format))
+            wf.setframerate(rate)
+            wf.writeframes(b''.join(frames))
+            wf.close()
+            
+            # Azure Speech-to-Text endpoint
+            stt_url = f"https://{AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1"
+            
+            # Query parameters
+            params = {
+                "language": "en-US",
+                "format": "detailed"
+            }
+            
+            # Headers
+            headers = {
+                "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
+                "Content-Type": "audio/wav"
+            }
+            
+            # Send audio file to Azure for speech recognition
+            with open(temp_filename, 'rb') as audio_file:
+                response = requests.post(stt_url, params=params, headers=headers, data=audio_file)
+            
+            # Clean up temporary file
+            os.remove(temp_filename)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("RecognitionStatus") == "Success":
+                    text = result.get("DisplayText", "")
+                    print(f"\nCommand detected: {text}")
+                    return text
+                else:
+                    print(f"\nRecognition failed: {result.get('RecognitionStatus')}")
+                    return None
+            else:
+                print(f"Error: {response.status_code}, {response.text}")
+                return None
                 
         except Exception as e:
-            print(f"\nCommand recognition error: {e}")
+            print(f"\nSpeech recognition error: {e}")
+            return None
+    
+    def run(self):
+        # Recognize speech and get command
+        recognized_text = self.recognize_speech()
+        
+        # Process the recognized text with GPT if available
+        if recognized_text and not self.stopped():
+            self.get_gpt_response(recognized_text)
 
 def main():
     try:

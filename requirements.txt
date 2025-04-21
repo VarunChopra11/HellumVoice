@@ -3,7 +3,6 @@ pvporcupine
 pvrecorder
 
 # Azure services
-azure-cognitiveservices-speech
 openai
 
 # Environment variables
