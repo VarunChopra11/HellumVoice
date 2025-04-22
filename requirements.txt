@@ -15,4 +15,6 @@ requests
 polyline
 pyserial
 
-python3-tk
+
+asyncio
+deepgram-sdk
