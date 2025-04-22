@@ -9,7 +9,6 @@ openai
 python-dotenv
 
 # Audio processing
-pyaudio
 
 requests
 polyline
